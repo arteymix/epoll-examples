@@ -6,13 +6,19 @@
 #include<stdio.h>
 #include<string.h>
 
-struct fd_t {
-    int fd;
-    struct epoll_event event;
-};
-
 /*
  * This is a simple example of a scalable poll-based HTTP server.
+ *
+ * There are three kind of file descriptors that are relevant here:
+ *  - one for epoll (via epoll_create)
+ *  - one for the socket (via socket)
+ *  - one for each individual TCP connections (via accept)
+ *
+ *  We monitor read events on the socket to accept new connections and
+ *  read-write events on each individual connections.
+ *
+ *  Once a connection has been processed, it is immediately closed. We are not
+ *  performing any HTTP pipelining here for sake of simplicity.
  */
 
 static void
@@ -89,7 +95,7 @@ main() {
                 }
                 // new connection to accept
                 struct epoll_event event = (struct epoll_event) {
-                    .events = EPOLLIN | EPOLLOUT | EPOLLONESHOT,
+                    .events = EPOLLIN | EPOLLOUT,
                     .data = {.fd = connfd}
                 };
                 if (epoll_ctl(epfd, EPOLL_CTL_ADD, connfd, &event) == -1) {
