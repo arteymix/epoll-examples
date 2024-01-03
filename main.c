@@ -17,16 +17,16 @@ struct fd_t {
 
 static void
 close_fd(int* fd) {
-    printf("Closing fd %d...\n", *fd);
-    close (*fd);
+    if (*fd != -1) {
+        printf("Closing fd %d...\n", *fd);
+        close (*fd);
+    }
 }
 
 int
 main() {
     const int maxconnections = 10;
 
-    // keep the first fd for the socket
-    struct fd_t fds[1 + maxconnections];
     int numconnections = 0;
 
     // structure containing the events being read
@@ -60,19 +60,18 @@ main() {
     printf("Waiting for incoming connections on http://%s:%d...\n", "localhost", 8080);
 
     // adding the socket fd so we can be notified of new connections
-    fds[0].fd = sockfd;
-    fds[0].event = (struct epoll_event) {
+    struct epoll_event sock_event = (struct epoll_event) {
         .events = EPOLLIN,
         .data = {.fd = sockfd}
     };
 
-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, fds[0].fd, &fds[0].event) == -1) {
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &sock_event) == -1) {
         printf("Failed to add fd to epoll: %s\n", strerror(errno));
         return 1;
     }
 
     while (1) {
-        int numready = epoll_wait(epfd, events, 1 + numconnections, 10);
+        int numready = epoll_wait(epfd, events, 1 + 2 * numconnections, 10);
         if (numready == -1) {
             printf("Failed to poll: %s.\n", strerror(errno));
             return 1;
@@ -88,17 +87,16 @@ main() {
                     printf("Failed to accept a new connection: %s\n", strerror(errno));
                     return 1;
                 }
-                int i = numconnections++;
                 // new connection to accept
-                fds[i].fd = connfd;
-                fds[i].event = (struct epoll_event) {
-                    .events = EPOLLIN | EPOLLOUT,
+                struct epoll_event event = (struct epoll_event) {
+                    .events = EPOLLIN | EPOLLOUT | EPOLLONESHOT,
                     .data = {.fd = connfd}
                 };
-                if (epoll_ctl(epfd, EPOLL_CTL_ADD, fds[i].fd, &fds[i].event) == -1) {
+                if (epoll_ctl(epfd, EPOLL_CTL_ADD, connfd, &event) == -1) {
                     printf("Failed to add fd %d: %s\n", connfd, strerror(errno));
                     return 1;
                 }
+                numconnections++;
             } else {
                 int connfd = events[i].data.fd;
                 if (events[i].events & EPOLLIN) {
@@ -110,7 +108,7 @@ main() {
                     }
                 }
                 if (events[i].events & EPOLLOUT) {
-                    const char* buf = "HTTP/1.1 200 OK\r\nHost: localhost\r\n\r\nHello world!";
+                    const char* buf = "HTTP/1.1 200 OK\r\nHost: localhost\r\nContent-Length: 12\r\n\r\nHello world!";
                     if (write(connfd, buf, strlen(buf)) == -1) {
                         printf("Failed to write payload: %s.\n", strerror(errno));
                         return 1;
@@ -123,8 +121,6 @@ main() {
                         printf("Failed to close connection: %s.\n", strerror(errno));
                         return 1;
                     }
-                    // remove the fd by moving the last fd at its location
-                    fds[i] = fds[numconnections - 1];
                     numconnections--;
                 }
             }
